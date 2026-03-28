@@ -1,242 +1,91 @@
-# Azure Terraform Interview Repo
+# Azure Terraform Interview Component
 
-This repository provisions Azure infrastructure using **Terraform Stacks**, with a reusable component deployed to multiple environments (`dev` and `prod`).
+This repository publishes a reusable **Terraform Stack component configuration** to the HCP Terraform private registry. It is the versioned building block, not the live environment runner.
 
-## Architecture
+The actual `dev` and `prod` deployments should be created from a separate consumer Stack repository that references this published component.
 
-- `components/environment/`: Reusable environment component consumed by Terraform Stacks
-- `*.tfcomponent.hcl` and `*.tfdeploy.hcl` at repo root: the Stack definition and deployment inputs
-- `.github/workflows/terraform.yml`: CI workflow for validation and quality checks
+## What This Component Provisions
 
-Each environment provisions:
+Each deployment of this component creates:
 
-- One resource group
-- One VNet (using a module from Terraform Registry)
-- One Linux VM
-- One Storage Account with a Blob container
+- one Azure resource group
+- one VNet from the published `vnet` module
+- one Linux VM
+- one Storage Account and private Blob container
 
-## Terraform Stacks
+## Repository Layout
 
-This repository uses **Terraform Stacks** to manage multiple environment deployments from a single component configuration. Benefits include:
-
-- **Single source of truth**: One component definition for all environments
-- **Declarative configuration**: Environment-specific values in `.tfdeploy.hcl`
-- **Native Terraform syntax**: HCL-based configuration (`.tfcomponent.hcl`, `.tfdeploy.hcl`)
-- **Unified deployments**: Deploy multiple environments together or individually
-
-### Stack Structure
-
-```
+```text
 .
-├── .terraform-version         # Required Terraform version for Stacks
-├── .terraform.lock.hcl        # Provider locks for the Stack root
-├── components.tfcomponent.hcl # Component blocks sourcing modules
-├── deployments.tfdeploy.hcl   # Deployment blocks with per-env inputs
-├── providers.tfcomponent.hcl  # Provider configurations
-├── variables.tfcomponent.hcl  # Stack variable definitions
-└── components/environment/    # Reusable component source
-    ├── main.tf
-    ├── variables.tf
-    ├── outputs.tf
-    ├── versions.tf
-    └── .terraform.lock.hcl
+├── .terraform-version
+├── .terraform.lock.hcl
+├── components.tfcomponent.hcl
+├── providers.tfcomponent.hcl
+├── variables.tfcomponent.hcl
+└── components/environment/
 ```
 
-### Configuration Files
+The root `*.tfcomponent.hcl` files define the published Stack component configuration. The `components/environment/` directory contains the reusable Terraform module logic used by that component configuration.
 
-**`components.tfcomponent.hcl`** - Defines infrastructure components:
+## Consumer Model
+
+The intended operating model is:
+
+1. Publish this repository to the HCP Terraform private registry as a Stack component configuration.
+2. Create a second repository that consumes the published component with a `stack` block.
+3. Define `dev` and `prod` in that second repository’s `*.tfdeploy.hcl` files.
+4. Run plans and applies in HCP Terraform from the consumer Stack.
+
+This keeps versioned infrastructure design separate from live environment orchestration.
+
+## OIDC Inputs
+
+This component is designed to receive Azure workload identity inputs from a consuming Stack:
+
+- `client_id`
+- `tenant_id`
+- `subscription_id`
+- `identity_token`
+
+The root `azurerm` provider is configured for OIDC and expects the consuming Stack to generate the JWT with an `identity_token` block and pass it through as an ephemeral variable.
+
+## Usage Shape
+
+The consumer Stack should follow the private registry usage model:
+
 ```hcl
-component "environment" {
-  source = "./components/environment"
+stack "environment" {
+  source  = "<ORGANIZATION>/<COMPONENT_NAME>"
+  version = "~> 2.0"
+
   inputs = {
-    environment    = var.environment
-    location       = var.location
-    ...
-  }
-  providers = {
-    azurerm = provider.azurerm.this
+    environment        = var.environment
+    location           = var.location
+    client_id          = var.client_id
+    tenant_id          = var.tenant_id
+    subscription_id    = var.subscription_id
+    identity_token     = var.identity_token
+    admin_ssh_public_key = var.admin_ssh_public_key
   }
 }
 ```
 
-**`deployments.tfdeploy.hcl`** - Defines environment-specific deployments:
-```hcl
-deployment "dev" {
-  inputs = {
-    environment      = "dev"
-    location         = "eastus"
-    enable_public_ip = true
-  }
-}
+Copy the exact `stack` block snippet from the registry UI when you publish a new version, since the final source address depends on the organization and component name you chose in HCP Terraform.
 
-deployment "prod" {
-  inputs = {
-    environment      = "prod"
-    location         = "westeurope"
-    enable_public_ip = false
-  }
-}
-```
+## Validation
 
-## Prerequisites
-
-- Terraform CLI `>= 1.10` (required for Stacks)
-- Azure subscription access with permissions to create resource groups, networking, compute, and storage resources
-- Azure credentials configured via one of:
-  - Azure CLI (`az login`)
-  - Service Principal with OIDC (recommended for CI/CD)
-  - Service Principal with client secret/certificate
-
-## Getting Started
-
-### Initialize and Deploy via CLI
+Local validation for this component repo:
 
 ```bash
-# Initialize the stack (downloads component sources and providers)
 terraform stacks init
-
-# Preview the plan for all deployments
-terraform stacks plan
-
-# Apply the stack (deploys both dev and prod)
-terraform stacks apply
-
-# Or deploy a specific deployment
-terraform stacks apply -target=deployment.dev
-terraform stacks apply -target=deployment.prod
+terraform stacks validate
+terraform -chdir=components/environment init -backend=false
+terraform -chdir=components/environment validate
 ```
 
-### Required Variables
+The GitHub workflow runs formatting, `tflint`, component validation, and Stack validation for this published component configuration.
 
-The following variables must be provided (either via `-var`, environment variables, or a `.tfvars` file):
+## Notes
 
-| Variable | Type | Description |
-|----------|------|-------------|
-| `admin_ssh_public_key` | string | SSH public key for VM access (sensitive) |
-
-You can provide this via environment variable:
-```bash
-export TF_VAR_admin_ssh_public_key="$(cat ~/.ssh/id_rsa.pub)"
-```
-
-### Pull Request Workflow
-
-When you open a pull request, GitHub Actions runs:
-
-1. **Format check**: `terraform fmt -check`
-2. **Validation**: `terraform validate` in `components/environment/` and `terraform stacks validate` in repo root
-3. **Linting**: TFLint with custom rules
-
-## Environment Configuration
-
-### Development (`dev`)
-
-| Variable | Value |
-|----------|-------|
-| `environment` | `dev` |
-| `location` | `eastus` |
-| `location_short` | `eus` |
-| `address_space` | `10.10.0.0/16` |
-| `workload_subnet_cidr` | `10.10.1.0/24` |
-| `private_subnet_cidr` | `10.10.2.0/24` |
-| `enable_public_ip` | `true` |
-| `admin_cidrs` | `["203.0.113.10/32"]` |
-
-### Production (`prod`)
-
-| Variable | Value |
-|----------|-------|
-| `environment` | `prod` |
-| `location` | `westeurope` |
-| `location_short` | `weu` |
-| `address_space` | `10.20.0.0/16` |
-| `workload_subnet_cidr` | `10.20.1.0/24` |
-| `private_subnet_cidr` | `10.20.2.0/24` |
-| `enable_public_ip` | `false` |
-| `admin_cidrs` | `[]` |
-
-## Component Module Variables
-
-| Variable | Type | Description | Default |
-|----------|------|-------------|---------|
-| `environment` | string | Environment name (required) | - |
-| `project_name` | string | Project identifier | `acme` |
-| `location` | string | Azure region | - |
-| `location_short` | string | Short region code | - |
-| `address_space` | list(string) | VNet CIDR blocks | - |
-| `workload_subnet_cidr` | string | Workload subnet CIDR | - |
-| `private_subnet_cidr` | string | Private subnet CIDR | - |
-| `vm_size` | string | VM SKU | `Standard_B2s` |
-| `admin_username` | string | VM admin username | `azureuser` |
-| `admin_ssh_public_key` | string | SSH public key (sensitive) | - |
-| `admin_cidrs` | list(string) | Allowed SSH CIDRs | `[]` |
-| `enable_public_ip` | bool | Attach public IP to VM | `false` |
-| `storage_container_name` | string | Blob container name | `appdata` |
-| `ddos_protection_plan_id` | string | Optional DDoS plan ID | `null` |
-| `extra_tags` | map(string) | Additional tags | `{}` |
-
-## Security Notes
-
-- The VNet module supports subnet-specific NSGs and optional service delegation
-- The `dev` VM is reachable only from configured admin CIDRs
-- The `prod` VM has no public IP by default
-- Blob public access is disabled
-- Minimum TLS 1.2 for the Storage Account is enforced
-- Tags are standardized to improve ownership and cost tracking
-- SSH public key authentication only (no passwords)
-
-## CI/CD Pipeline
-
-The GitHub Actions workflow performs quality checks on every PR and push:
-
-1. **Format check**: `terraform fmt -check -recursive`
-2. **Validation**: `terraform validate` in `components/environment/` and `terraform stacks validate` in repo root
-3. **Linting**: TFLint across all directories
-
-Deployment is performed manually via `terraform stacks apply` or can be integrated with CI/CD platforms that support Terraform Stacks.
-
-## Migration from Environment Roots
-
-This repository previously used separate `environments/dev/` and `environments/prod/` directories. The migration to Terraform Stacks provides:
-
-- Eliminated code duplication (single component module)
-- Centralized environment configuration in HCL
-- Native Terraform syntax (no YAML)
-- Simplified state management (per-deployment state files)
-
-## Module Documentation
-
-The VNet module is sourced from the Terraform Registry (`app.terraform.io/mbarcia/vnet/azurerm`). Refer to the module's documentation for detailed configuration options.
-
-## Troubleshooting
-
-### Terraform Version Error
-
-Ensure you're using Terraform CLI >= 1.10:
-```bash
-terraform version
-```
-
-### Azure Authentication Errors
-
-Verify your Azure credentials:
-```bash
-az login
-az account show
-```
-
-Or configure service principal credentials via environment variables:
-```bash
-export ARM_CLIENT_ID=<client-id>
-export ARM_CLIENT_SECRET=<client-secret>
-export ARM_SUBSCRIPTION_ID=<subscription-id>
-export ARM_TENANT_ID=<tenant-id>
-```
-
-### Provider Installation Fails
-
-Clear the provider cache and reinitialize:
-```bash
-rm -rf .terraform
-terraform stacks init
-```
+- The VNet module source remains `app.terraform.io/mbarcia/vnet/azurerm`; ensure the consuming Stack runs in an HCP Terraform organization that can resolve that private module.
+- This repo no longer carries live `dev` and `prod` deployment definitions at root level.

@@ -1,6 +1,28 @@
 # Copyright (c) HashiCorp, Inc.
 # SPDX-License-Identifier: MPL-2.0
 
+variable "client_id" {
+  description = "Azure client ID for the workload identity used by a consuming Stack deployment."
+  type        = string
+}
+
+variable "tenant_id" {
+  description = "Azure tenant ID for the workload identity used by a consuming Stack deployment."
+  type        = string
+}
+
+variable "subscription_id" {
+  description = "Azure subscription ID targeted by a consuming Stack deployment."
+  type        = string
+}
+
+variable "identity_token" {
+  description = "HCP Terraform workload identity token passed from a consuming Stack deployment."
+  type        = string
+  sensitive   = true
+  ephemeral   = true
+}
+
 variable "environment" {
   description = "Environment name (e.g., dev, prod)."
   type        = string
