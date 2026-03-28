@@ -1,145 +1,242 @@
 # Azure Terraform Interview Repo
 
-This repository provisions a reusable Azure Virtual Network module and two sample environments, `dev` and `prod`, using Terraform and GitHub Actions.
+This repository provisions Azure infrastructure using **Terraform Stacks**, with a reusable component deployed to multiple environments (`dev` and `prod`).
 
 ## Architecture
 
-- `bootstrap/`: one-time stack that creates the Azure Storage backend used for remote Terraform state.
-- `modules/vnet/`: reusable VNet module with subnet, NSG, and subnet association support.
-- `environments/dev/`: sample development environment in `eastus`.
-- `environments/prod/`: sample production environment in `westeurope`.
-- `.github/workflows/terraform.yml`: CI/CD pipeline for validation, planning, and gated deployment.
+- `components/environment/`: Reusable environment component consumed by Terraform Stacks
+- `*.tfcomponent.hcl` and `*.tfdeploy.hcl` at repo root: the Stack definition and deployment inputs
+- `.github/workflows/terraform.yml`: CI workflow for validation and quality checks
 
 Each environment provisions:
 
-- one resource group
-- one VNet built from the reusable module
-- one Linux VM
-- one Storage Account plus a Blob container
+- One resource group
+- One VNet (using a module from Terraform Registry)
+- One Linux VM
+- One Storage Account with a Blob container
 
-## Why Resource Groups Instead Of Separate Subscriptions?
+## Terraform Stacks
 
-For this interview sample, `dev` and `prod` live in separate resource groups inside a single Azure subscription. That keeps the implementation easy to review and practical to run in a demo tenant while still showing clear environment boundaries and naming.
+This repository uses **Terraform Stacks** to manage multiple environment deployments from a single component configuration. Benefits include:
 
-In a larger production estate, separate subscriptions are usually stronger because they improve:
+- **Single source of truth**: One component definition for all environments
+- **Declarative configuration**: Environment-specific values in `.tfdeploy.hcl`
+- **Native Terraform syntax**: HCL-based configuration (`.tfcomponent.hcl`, `.tfdeploy.hcl`)
+- **Unified deployments**: Deploy multiple environments together or individually
 
-- blast-radius isolation
-- policy separation
-- budget ownership
-- RBAC boundaries
-- quota management
+### Stack Structure
 
-The environment roots in this repo are intentionally structured so they can be moved to separate subscriptions later with minimal code changes.
+```
+.
+├── .terraform-version         # Required Terraform version for Stacks
+├── .terraform.lock.hcl        # Provider locks for the Stack root
+├── components.tfcomponent.hcl # Component blocks sourcing modules
+├── deployments.tfdeploy.hcl   # Deployment blocks with per-env inputs
+├── providers.tfcomponent.hcl  # Provider configurations
+├── variables.tfcomponent.hcl  # Stack variable definitions
+└── components/environment/    # Reusable component source
+    ├── main.tf
+    ├── variables.tf
+    ├── outputs.tf
+    ├── versions.tf
+    └── .terraform.lock.hcl
+```
+
+### Configuration Files
+
+**`components.tfcomponent.hcl`** - Defines infrastructure components:
+```hcl
+component "environment" {
+  source = "./components/environment"
+  inputs = {
+    environment    = var.environment
+    location       = var.location
+    ...
+  }
+  providers = {
+    azurerm = provider.azurerm.this
+  }
+}
+```
+
+**`deployments.tfdeploy.hcl`** - Defines environment-specific deployments:
+```hcl
+deployment "dev" {
+  inputs = {
+    environment      = "dev"
+    location         = "eastus"
+    enable_public_ip = true
+  }
+}
+
+deployment "prod" {
+  inputs = {
+    environment      = "prod"
+    location         = "westeurope"
+    enable_public_ip = false
+  }
+}
+```
 
 ## Prerequisites
 
-- Terraform `>= 1.6`
+- Terraform CLI `>= 1.10` (required for Stacks)
 - Azure subscription access with permissions to create resource groups, networking, compute, and storage resources
-- GitHub repository with Actions enabled
-- GitHub OIDC trust configured for Azure authentication
-- An SSH public key available for VM access
+- Azure credentials configured via one of:
+  - Azure CLI (`az login`)
+  - Service Principal with OIDC (recommended for CI/CD)
+  - Service Principal with client secret/certificate
 
-Repository-level GitHub variables expected by the workflow:
+## Getting Started
 
-- `AZURE_CLIENT_ID`
-- `AZURE_TENANT_ID`
-- `AZURE_SUBSCRIPTION_ID`
-- `TFSTATE_RESOURCE_GROUP`
-- `TFSTATE_STORAGE_ACCOUNT`
-- `TFSTATE_CONTAINER`
-- `TF_DEV_ADMIN_CIDRS`
-  - Example: `["203.0.113.10/32"]`
-- `TF_PROD_ADMIN_CIDRS`
-  - Example: `[]`
-
-Repository-level GitHub secrets expected by the workflow:
-
-- `TF_ADMIN_SSH_PUBLIC_KEY`
-
-GitHub Environments:
-
-- `dev`: optional environment boundary for the automatic development deployment
-- `prod`: protected environment used to gate the manual production deployment
-
-## Bootstrap Remote State
-
-The `bootstrap` stack intentionally uses local state because it creates the remote backend that the environment stacks depend on.
+### Initialize and Deploy via CLI
 
 ```bash
-cd bootstrap
-az login
-terraform init
-terraform plan
-terraform apply
+# Initialize the stack (downloads component sources and providers)
+terraform stacks init
+
+# Preview the plan for all deployments
+terraform stacks plan
+
+# Apply the stack (deploys both dev and prod)
+terraform stacks apply
+
+# Or deploy a specific deployment
+terraform stacks apply -target=deployment.dev
+terraform stacks apply -target=deployment.prod
 ```
 
-Capture these outputs after apply:
+### Required Variables
 
-- state resource group name
-- storage account name
-- blob container name
+The following variables must be provided (either via `-var`, environment variables, or a `.tfvars` file):
 
-Store them in the repository variables listed above.
+| Variable | Type | Description |
+|----------|------|-------------|
+| `admin_ssh_public_key` | string | SSH public key for VM access (sensitive) |
 
-## Environment Usage
-
-Initialize an environment with backend settings from your bootstrap resources:
-
+You can provide this via environment variable:
 ```bash
-cd environments/dev
-terraform init \
-  -backend-config="resource_group_name=<tfstate-rg>" \
-  -backend-config="storage_account_name=<tfstate-sa>" \
-  -backend-config="container_name=<tfstate-container>" \
-  -backend-config="key=dev.tfstate"
-terraform plan
+export TF_VAR_admin_ssh_public_key="$(cat ~/.ssh/id_rsa.pub)"
 ```
 
-Repeat the same pattern for `prod`, using `key=prod.tfstate`.
+### Pull Request Workflow
 
-Terraform variables that commonly change per environment:
+When you open a pull request, GitHub Actions runs:
 
-- `project_name`
-- `location`
-- `location_short`
-- `address_space`
-- `workload_subnet_cidr`
-- `private_subnet_cidr`
-- `vm_size`
-- `admin_cidrs`
-- `enable_public_ip`
+1. **Format check**: `terraform fmt -check`
+2. **Validation**: `terraform validate` in `components/environment/` and `terraform stacks validate` in repo root
+3. **Linting**: TFLint with custom rules
 
-## Release Lifecycle
+## Environment Configuration
 
-The GitHub Actions workflow models a simple release lifecycle:
+### Development (`dev`)
 
-1. Pull requests run `fmt`, `validate`, `tflint`, `terraform-docs` checks, plus `plan` for both `dev` and `prod`.
-2. A merge to `main` automatically applies `dev`.
-3. `prod` is deployed manually with `workflow_dispatch` and should be protected by a GitHub Environment approval gate.
+| Variable | Value |
+|----------|-------|
+| `environment` | `dev` |
+| `location` | `eastus` |
+| `location_short` | `eus` |
+| `address_space` | `10.10.0.0/16` |
+| `workload_subnet_cidr` | `10.10.1.0/24` |
+| `private_subnet_cidr` | `10.10.2.0/24` |
+| `enable_public_ip` | `true` |
+| `admin_cidrs` | `["203.0.113.10/32"]` |
 
-This gives fast feedback for development while keeping production promotion explicit and reviewable.
+### Production (`prod`)
+
+| Variable | Value |
+|----------|-------|
+| `environment` | `prod` |
+| `location` | `westeurope` |
+| `location_short` | `weu` |
+| `address_space` | `10.20.0.0/16` |
+| `workload_subnet_cidr` | `10.20.1.0/24` |
+| `private_subnet_cidr` | `10.20.2.0/24` |
+| `enable_public_ip` | `false` |
+| `admin_cidrs` | `[]` |
+
+## Component Module Variables
+
+| Variable | Type | Description | Default |
+|----------|------|-------------|---------|
+| `environment` | string | Environment name (required) | - |
+| `project_name` | string | Project identifier | `acme` |
+| `location` | string | Azure region | - |
+| `location_short` | string | Short region code | - |
+| `address_space` | list(string) | VNet CIDR blocks | - |
+| `workload_subnet_cidr` | string | Workload subnet CIDR | - |
+| `private_subnet_cidr` | string | Private subnet CIDR | - |
+| `vm_size` | string | VM SKU | `Standard_B2s` |
+| `admin_username` | string | VM admin username | `azureuser` |
+| `admin_ssh_public_key` | string | SSH public key (sensitive) | - |
+| `admin_cidrs` | list(string) | Allowed SSH CIDRs | `[]` |
+| `enable_public_ip` | bool | Attach public IP to VM | `false` |
+| `storage_container_name` | string | Blob container name | `appdata` |
+| `ddos_protection_plan_id` | string | Optional DDoS plan ID | `null` |
+| `extra_tags` | map(string) | Additional tags | `{}` |
 
 ## Security Notes
 
-- The VNet module supports subnet-specific NSGs and optional service delegation.
-- The `dev` VM is reachable only from the configured admin CIDRs.
-- The `prod` VM has no public IP by default.
-- Blob public access is disabled.
-- Minimum TLS for the Storage Account is enforced.
-- Tags are standardized to improve ownership and cost tracking.
+- The VNet module supports subnet-specific NSGs and optional service delegation
+- The `dev` VM is reachable only from configured admin CIDRs
+- The `prod` VM has no public IP by default
+- Blob public access is disabled
+- Minimum TLS 1.2 for the Storage Account is enforced
+- Tags are standardized to improve ownership and cost tracking
+- SSH public key authentication only (no passwords)
+
+## CI/CD Pipeline
+
+The GitHub Actions workflow performs quality checks on every PR and push:
+
+1. **Format check**: `terraform fmt -check -recursive`
+2. **Validation**: `terraform validate` in `components/environment/` and `terraform stacks validate` in repo root
+3. **Linting**: TFLint across all directories
+
+Deployment is performed manually via `terraform stacks apply` or can be integrated with CI/CD platforms that support Terraform Stacks.
+
+## Migration from Environment Roots
+
+This repository previously used separate `environments/dev/` and `environments/prod/` directories. The migration to Terraform Stacks provides:
+
+- Eliminated code duplication (single component module)
+- Centralized environment configuration in HCL
+- Native Terraform syntax (no YAML)
+- Simplified state management (per-deployment state files)
 
 ## Module Documentation
 
-The module README is designed to be updated with `terraform-docs`.
+The VNet module is sourced from the Terraform Registry (`app.terraform.io/mbarcia/vnet/azurerm`). Refer to the module's documentation for detailed configuration options.
 
+## Troubleshooting
+
+### Terraform Version Error
+
+Ensure you're using Terraform CLI >= 1.10:
 ```bash
-terraform-docs markdown table --config .terraform-docs.yml modules/vnet
+terraform version
 ```
 
-The CI workflow checks that generated module documentation stays in sync.
+### Azure Authentication Errors
 
-## Terraform Cloud Compatibility
+Verify your Azure credentials:
+```bash
+az login
+az account show
+```
 
-This implementation uses Azure-native remote state because it keeps the submission self-contained and directly aligned to Azure plus GitHub.
+Or configure service principal credentials via environment variables:
+```bash
+export ARM_CLIENT_ID=<client-id>
+export ARM_CLIENT_SECRET=<client-secret>
+export ARM_SUBSCRIPTION_ID=<subscription-id>
+export ARM_TENANT_ID=<tenant-id>
+```
 
-Terraform Cloud remains a compatible future option. The environment roots can be moved to a Terraform Cloud backend without redesigning the module or environment composition. If you wanted to extend this into a broader platform setup, Terraform Cloud would be a reasonable place to add centralized runs, policy enforcement, workspace management, and team workflows.
+### Provider Installation Fails
+
+Clear the provider cache and reinitialize:
+```bash
+rm -rf .terraform
+terraform stacks init
+```

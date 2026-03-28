@@ -5,13 +5,12 @@ resource "random_string" "storage_suffix" {
 }
 
 locals {
-  environment  = "dev"
-  name_prefix  = "${var.project_name}-${local.environment}-${var.location_short}"
+  name_prefix  = "${var.project_name}-${var.environment}-${var.location_short}"
   vm_name      = "vm-${local.name_prefix}"
-  storage_name = substr(replace(lower("st${var.project_name}${local.environment}${var.location_short}${random_string.storage_suffix.result}"), "-", ""), 0, 24)
+  storage_name = substr(replace(lower("st${var.project_name}${var.environment}${var.location_short}${random_string.storage_suffix.result}"), "-", ""), 0, 24)
 
   common_tags = merge(var.extra_tags, {
-    environment = local.environment
+    environment = var.environment
     location    = var.location
     managed_by  = "terraform"
     project     = var.project_name
@@ -53,10 +52,11 @@ resource "azurerm_resource_group" "this" {
 }
 
 module "vnet" {
-  source = "../../modules/vnet"
+  source  = "app.terraform.io/mbarcia/vnet/azurerm"
+  version = "1.0.0"
 
   project_name            = var.project_name
-  environment             = local.environment
+  environment             = var.environment
   location                = var.location
   resource_group_name     = azurerm_resource_group.this.name
   address_space           = var.address_space
@@ -92,7 +92,7 @@ resource "azurerm_network_interface" "vm" {
 
 resource "azurerm_linux_virtual_machine" "this" {
   name                            = local.vm_name
-  computer_name                   = "vmdev${var.location_short}"
+  computer_name                   = "vm${var.environment}${var.location_short}"
   resource_group_name             = azurerm_resource_group.this.name
   location                        = var.location
   size                            = var.vm_size
