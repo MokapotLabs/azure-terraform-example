@@ -1,3 +1,8 @@
+variable "environment" {
+  description = "Environment name (e.g., dev, prod)."
+  type        = string
+}
+
 variable "project_name" {
   description = "Short project identifier used for naming."
   type        = string
@@ -5,37 +10,32 @@ variable "project_name" {
 }
 
 variable "location" {
-  description = "Azure region for the prod environment."
+  description = "Azure region for the environment."
   type        = string
-  default     = "westeurope"
 }
 
 variable "location_short" {
   description = "Short region code used in names."
   type        = string
-  default     = "weu"
 }
 
 variable "address_space" {
-  description = "CIDR blocks assigned to the prod VNet."
+  description = "CIDR blocks assigned to the VNet."
   type        = list(string)
-  default     = ["10.20.0.0/16"]
 }
 
 variable "workload_subnet_cidr" {
   description = "CIDR block assigned to the workload subnet."
   type        = string
-  default     = "10.20.1.0/24"
 }
 
 variable "private_subnet_cidr" {
   description = "CIDR block assigned to the private subnet."
   type        = string
-  default     = "10.20.2.0/24"
 }
 
 variable "vm_size" {
-  description = "Azure VM size for the prod Linux VM."
+  description = "Azure VM size for the Linux VM."
   type        = string
   default     = "Standard_B2s"
 }
@@ -53,13 +53,13 @@ variable "admin_ssh_public_key" {
 }
 
 variable "admin_cidrs" {
-  description = "CIDR ranges allowed to SSH into the prod VM if a public IP is enabled."
+  description = "CIDR ranges allowed to SSH into the VM if a public IP is enabled."
   type        = list(string)
   default     = []
 }
 
 variable "enable_public_ip" {
-  description = "Whether to attach a public IP to the prod VM."
+  description = "Whether to attach a public IP to the VM."
   type        = bool
   default     = false
 }
