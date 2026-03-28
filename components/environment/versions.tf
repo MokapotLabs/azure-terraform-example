@@ -1,6 +1,14 @@
 terraform {
   required_version = ">= 1.6.0"
 
+  cloud {
+    organization = "mokapot"
+
+    workspaces {
+      tags = ["azure-terraform-interview"]
+    }
+  }
+
   required_providers {
     azurerm = {
       source  = "hashicorp/azurerm"
