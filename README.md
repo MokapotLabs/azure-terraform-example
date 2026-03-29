@@ -83,7 +83,16 @@ terraform -chdir=components/environment init -backend=false
 terraform -chdir=components/environment validate
 ```
 
-The GitHub workflow runs formatting, `tflint`, component validation, and Stack validation for this published component configuration.
+Validation is intended to run locally via `pre-commit` for this published component configuration.
+
+Install and enable it with:
+
+```bash
+pip install pre-commit
+pre-commit install
+```
+
+The configured hooks run formatting, `tflint`, component validation, and Stack validation before commit.
 
 ## Notes
 
