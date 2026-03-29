@@ -127,11 +127,19 @@ resource "azurerm_storage_account" "this" {
   account_tier                    = "Standard"
   account_replication_type        = "LRS"
   account_kind                    = "StorageV2"
+  shared_access_key_enabled       = true
+  default_to_oauth_authentication = false
   min_tls_version                 = "TLS1_2"
   https_traffic_only_enabled      = true
   allow_nested_items_to_be_public = false
   public_network_access_enabled   = true
   tags                            = local.common_tags
+
+  share_properties {
+    retention_policy {
+      days = 7
+    }
+  }
 }
 
 resource "azurerm_storage_container" "this" {
